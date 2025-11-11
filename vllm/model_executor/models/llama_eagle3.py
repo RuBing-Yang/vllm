@@ -41,6 +41,7 @@ class LlamaDecoderLayer(LlamaDecoderLayer):
 
         config = config or vllm_config.model_config.hf_config
         quant_config = self.get_quant_config(vllm_config)
+        self.rope_scaling = config.rope_scaling
 
         # First layer uses 2*hidden_size (embeds + hidden_states concatenated)
         # Subsequent layers use hidden_size (only hidden_states, no embeds)
@@ -107,6 +108,8 @@ class LlamaDecoderLayer(LlamaDecoderLayer):
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
 
         # Self Attention
+        if self.rope_scaling is None and positions.ndim > 1:
+            positions = torch.arange(positions.shape[-1], device=positions.device, dtype=positions.dtype)
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
