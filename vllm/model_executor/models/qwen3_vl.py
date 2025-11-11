@@ -87,6 +87,7 @@ from .interfaces import (
     SupportsMRoPE,
     SupportsMultiModal,
     SupportsPP,
+    SupportsEagle3
 )
 from .qwen2_5_vl import (
     Qwen2_5_VisionAttention,
@@ -1102,9 +1103,12 @@ class Qwen3LLMModel(Qwen3Model):
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
+        aux_hidden_states = []
         for layer_idx, layer in islice(
             enumerate(self.layers), self.start_layer, self.end_layer
         ):
+            if layer_idx in self.aux_hidden_state_layers:
+                aux_hidden_states.append(hidden_states + residual if residual is not None else hidden_states)
             hidden_states, residual = layer(
                 positions,
                 hidden_states,
@@ -1124,6 +1128,8 @@ class Qwen3LLMModel(Qwen3Model):
                 {"hidden_states": hidden_states, "residual": residual}
             )
         hidden_states, _ = self.norm(hidden_states, residual)
+        if len(aux_hidden_states) > 0:
+            return hidden_states, aux_hidden_states
         return hidden_states
 
 
@@ -1166,7 +1172,7 @@ class Qwen3LLMForCausalLM(Qwen3ForCausalLM):
     dummy_inputs=Qwen3VLDummyInputsBuilder,
 )
 class Qwen3VLForConditionalGeneration(
-    nn.Module, SupportsMultiModal, SupportsLoRA, SupportsPP, SupportsMRoPE
+    nn.Module, SupportsMultiModal, SupportsLoRA, SupportsEagle3, SupportsPP, SupportsMRoPE
 ):
     packed_modules_mapping = {
         "qkv_proj": [
@@ -1284,6 +1290,13 @@ class Qwen3VLForConditionalGeneration(
         if num_tokens > 0:
             for idx in range(self.deepstack_num_level):
                 self.deepstack_input_embeds[idx][:num_tokens].zero_()
+
+    def set_aux_hidden_state_layers(self, layers: tuple[int, ...]) -> None:
+        self.language_model.model.aux_hidden_state_layers = layers
+
+    def get_eagle3_aux_hidden_state_layers(self) -> tuple[int, ...]:
+        num_layers = len(self.language_model.model.layers)
+        return (2, num_layers // 2, num_layers - 3) 
 
     def _validate_and_reshape_mm_tensor(
         self, mm_input: object, name: str
